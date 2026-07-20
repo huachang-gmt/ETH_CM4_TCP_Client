@@ -1,0 +1,28 @@
+# 排除所有核心底下的 Debug 與 Release 資料夾
+**/Debug/
+**/Release/
+
+# 排除編譯暫存檔
+*.o
+*.d
+*.crf
+*.htm
+*.dep
+*.lnp
+*.lst
+*.map
+*.axf
+*.bin
+*.elf
+*.hex
+
+# 排除 CubeMX 的備份與暫存
+.mxproject
+MXTmpFiles/
+
+# 排除 VS Code 的本地設定
+.vscode/
+
+# 排除作業系統檔案
+Thumbs.db
+.DS_Store
