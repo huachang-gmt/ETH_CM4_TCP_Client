@@ -1,5 +1,21 @@
 # STM32H755ZI-Q Ethernet + LwIP 網路建立與 CM4 TCP Client
 
+## 更新說明
+
+```text
+[2026-07-22]
+1. 在原來的基礎上，新增加 data_client.c 與 data_client.h。 用來模擬 EtherCAT 來源資料給 tcp_client 發送出去。
+2. 使用 32 個 buffer，每個 buffer 具有 400 byte 大小。
+3. 寫入資料利用 write_index 從 buf[0] 寫到 buf[31] 然後覆蓋舊的資料繼續寫入 buf[0] ...如此反覆。
+4. 每 1ms 產生一組資料。
+5. 利用 read_index 表示 tcp_client 讀取資料，讀完一筆，read_index++，當 write_index==read_index，表示資料都讀完，而且送出。
+6. 使用 32 個 buffer的目的是 保全完整的來源資料，如果 讀出 TCP 有些延遲，會有緩衝，可以防止資料遺失。
+7. 目前已知的問題是，tcp_client 每次會丟出兩個 400 byte 資料封包，這兩個資料封包 sequence number 會是相同的。
+
+    400 byte payload
+    = 4 byte sequence + 308 byte pattern + 88 byte zero
+```
+
 ## 專案簡介
 
 本專案使用 STM32H755ZI-Q NUCLEO 開發板建立 Ethernet 網路功能，採用：
@@ -23,6 +39,8 @@
 * CM4\Core\Src\main.c
 * CM4\Core\Src\tcp_client.c
 * CM4\Core\Inc\tcp_client.h
+* CM4\Core\Src\data_client.c
+* CM4\Core\Inc\data_client.h
 
 ## 在電腦端的 TCP Server 程式 ：  tcp_server.py
 
@@ -296,3 +314,34 @@ if __name__ == "__main__":
 
     os._exit(0)
 ```
+
+```text
+STM32H755 (Client)
+        │
+        │ TCP Data (400 Bytes)
+        ▼
+Windows TCP Driver
+        │
+        │ ① 收到封包
+        │
+        ├────────────► 立刻送 ACK
+        │
+        ▼
+Socket Receive Buffer (SO_RCVBUF)
+        │
+        ▼
+Python recv()
+        │
+        ▼
+current_buffer (16MB)
+        │
+        ▼
+Queue
+        │
+        ▼
+Disk Writer Thread
+        │
+        ▼
+SSD/HDD
+```
+

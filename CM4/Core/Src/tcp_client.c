@@ -1,17 +1,47 @@
 #include "tcp_client.h"
 #include "lwip/tcp.h"
 #include <string.h>
+#include "data_client.h"
 
 static struct tcp_pcb *tpcb = NULL;
 static client_state_t state = CLIENT_IDLE;
 
-static uint8_t payload[BUFFER_SIZE];
+/*
+ *========================================================
+ * 目前正在等待 ACK 的封包
+ *
+ * 注意：
+ *
+ * data_client_release_packet()
+ *
+ * 必須等 tcp_sent()
+ * 才能呼叫
+ *
+ *========================================================
+ */
+static DATA_PACKET *current_packet = NULL;
 
-/*------------------------------------------------------------------
- * 修改1：
- * 使用 ACK credit 機制取代固定 1ms 發送
- *-----------------------------------------------------------------*/
+/*
+ *========================================================
+ * TCP ACK Credit
+ *
+ * 控制TCP傳送量
+ *
+ *========================================================
+ */
 static volatile uint32_t tx_credit = 0;
+
+/*
+ *========================================================
+ * Debug
+ *
+ * 記錄上一個sequence
+ *
+ * 用來判斷資料是否被覆蓋
+ *
+ *========================================================
+ */
+static uint32_t last_sequence = 0;
 
 
 /*------------------------------------------------------------------
@@ -24,21 +54,23 @@ static void tcp_client_err(void *arg, err_t err)
 
     state = CLIENT_IDLE;
     tpcb = NULL;
+    current_packet = NULL;
     tx_credit = 0;
 
-    HAL_GPIO_WritePin(GPIOB,
-                      GPIO_PIN_14,
-                      GPIO_PIN_SET);      // 紅燈亮表示斷線
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);      // 紅燈亮表示斷線
 }
 
 
-/*------------------------------------------------------------------
- * 修改2：
- * tcp_sent callback
+/*
+ *========================================================
+ * ACK Callback
  *
- * 每當對方 ACK 某些資料時，
- * len 就是本次被 ACK 的 byte 數量。
- *-----------------------------------------------------------------*/
+ * TCP真正收到ACK後
+ *
+ * 才代表上一包資料完成
+ *
+ *========================================================
+ */
 static err_t tcp_client_sent(void *arg,
                              struct tcp_pcb *pcb,
                              u16_t len)
@@ -46,7 +78,13 @@ static err_t tcp_client_sent(void *arg,
     (void)arg;
     (void)pcb;
 
-    tx_credit += len;
+    tx_credit += len;    
+
+    if(current_packet != NULL)
+    {
+        data_client_release_packet();
+        current_packet = NULL;
+    }
 
     return ERR_OK;
 }
@@ -60,26 +98,16 @@ static err_t tcp_client_connected(void *arg,
                                   err_t err)
 {
     if(err == ERR_OK)
-    {
-        /*----------------------------------------------------------
-         * 修改3：
-         * 關閉 Nagle
-         *---------------------------------------------------------*/
+    {        
         tcp_nagle_disable(pcb);
 
-        /*----------------------------------------------------------
-         * 修改4：
-         * 註冊 ACK callback
-         *---------------------------------------------------------*/
-        tcp_sent(pcb,
-                 tcp_client_sent);
+        tcp_sent(pcb, tcp_client_sent);
 
-        /*
-         * 初始允許先送兩包
-         */
         tx_credit = BUFFER_SIZE * 2;
 
         state = CLIENT_CONNECTED;
+
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);// 與 server 連上線，紅燈熄滅
 
         return ERR_OK;
     }
@@ -93,12 +121,8 @@ static err_t tcp_client_connected(void *arg,
  *-----------------------------------------------------------------*/
 void tcp_client_init(void)
 {
-    memset(payload,
-           'A',
-           BUFFER_SIZE - 2);
+    last_sequence = 0;
 
-    payload[BUFFER_SIZE - 2] = '\r';
-    payload[BUFFER_SIZE - 1] = '\n';
 }
 
 
@@ -118,11 +142,7 @@ void tcp_client_handler(void)
                 tcp_err(tpcb,
                         tcp_client_err);
 
-                state = CLIENT_CONNECTING;
-
-                HAL_GPIO_WritePin(GPIOB,
-                                  GPIO_PIN_14,
-                                  GPIO_PIN_RESET);
+                state = CLIENT_CONNECTING;                
 
                 ip_addr_t dest_ip;
 
@@ -145,9 +165,7 @@ void tcp_client_handler(void)
 
                         state = CLIENT_IDLE;
 
-                        HAL_GPIO_WritePin(GPIOB,
-                                          GPIO_PIN_14,
-                                          GPIO_PIN_SET);
+                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);// 亮紅燈 (PB14)
                     }
                 }
             }
@@ -170,70 +188,102 @@ void tcp_client_handler(void)
                 state = CLIENT_IDLE;
                 break;
             }
+            
+            if(current_packet != NULL)
+            {
+                break;
+            }
+            
 
-            /*------------------------------------------------------
-             * 修改5：
-             * 有 credit 才能發送
-             *-----------------------------------------------------*/
             while(tx_credit >= BUFFER_SIZE)
             {
-                /*--------------------------------------------------
-                 * 修改6：
-                 * 同時檢查 sndbuf
-                 *-------------------------------------------------*/
+                
+                current_packet = data_client_get_packet();
+
+                if(current_packet == NULL)
+                {
+                    break;
+                }
+                
+                
+
+                /*
+                * TCP buffer確認
+                */
                 if(tcp_sndbuf(tpcb) < BUFFER_SIZE)
                 {
+                    current_packet = NULL;
                     break;
                 }
 
-                /*--------------------------------------------------
-                 * 修改7：
-                 * 同時檢查 segment queue
-                 *-------------------------------------------------*/
+
                 if(tpcb->snd_queuelen >= TCP_SND_QUEUELEN)
                 {
+                    current_packet = NULL;
                     break;
                 }
 
-                err_t err;
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);// 熄滅綠燈
+                HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);// 熄滅黃燈
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);// 熄滅紅燈
+                /*
+                *================================================
+                * Sequence Debug
+                *
+                * 如果跳號
+                *
+                * 表示Ring Buffer被覆蓋
+                *
+                *================================================
+                */
+                /*
+                * 紅燈快速閃一下
+                * EtherCAT Producer 速度 > TCP Consumer 中間資料被覆蓋
+                * 表示資料跳號
+                */
+                
+                if(current_packet->sequence != last_sequence + 1)
+                {
+                    if(current_packet->sequence >= last_sequence + 1)
+                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);// 亮綠燈 (PB0)
+                    else
+                        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_SET);// 亮黃燈 (PE1)
 
-                /*--------------------------------------------------
-                 * 修改8：
-                 * 不使用 COPY
-                 *-------------------------------------------------*/
+                }
+
+                if(current_packet->sequence == last_sequence)
+                    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);// 亮紅燈 (PB14)
+
+                last_sequence = current_packet->sequence;
+
+                err_t err;
+               
                 err = tcp_write(
                             tpcb,
-                            payload,
+                            current_packet->data,
                             BUFFER_SIZE,
-                            0); // 如果 payload 永遠是同一塊
+                            TCP_WRITE_FLAG_COPY);
 
                 if(err == ERR_OK)
                 {
                     tx_credit -= BUFFER_SIZE;
 
-                    tcp_output(tpcb);
+                    tcp_output(tpcb);                    
 
-                    HAL_GPIO_TogglePin(
-                        GPIOE,
-                        GPIO_PIN_1);      // 黃燈
                 }
                 else
                 {
-                    /*----------------------------------------------
-                     * 修改9：
-                     * 顯示資源不足
-                     *---------------------------------------------*/
-                    HAL_GPIO_TogglePin(
-                        GPIOB,
-                        GPIO_PIN_0);      // 綠燈
+                    current_packet = NULL;                   
 
                     break;
-                }
+
+                }                 
+
             }
 
             break;
-        }
 
+        }
         default:
         {
             state = CLIENT_IDLE;

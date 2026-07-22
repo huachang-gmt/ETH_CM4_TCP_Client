@@ -1,7 +1,8 @@
 #ifndef TCP_CLIENT_H
 #define TCP_CLIENT_H
 
-#define RPI_SERVER_IP "192.168.88.100"
+//#define RPI_SERVER_IP "192.168.88.200"  //  Raspberry Pi 5 IP 位址
+#define RPI_SERVER_IP "192.168.88.100"  // 我的電腦位址 
 #define RPI_SERVER_PORT 8888
 #define BUFFER_SIZE 400
 

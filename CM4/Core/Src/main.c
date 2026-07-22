@@ -25,6 +25,7 @@
 #include "netif.h"  
 #include "stm32h7xx_nucleo.h"   
 #include "tcp_client.h"
+#include "data_client.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -116,6 +117,7 @@ int main(void)
   MX_GPIO_Init();
   MX_LWIP_Init();
   tcp_client_init();
+  data_client_init();
   /* USER CODE BEGIN 2 */
 
   uint32_t last_link_check = 0; 
@@ -149,6 +151,11 @@ int main(void)
         //HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1); // 翻轉黃燈 (PE1)
     }
 
+    /*
+     * EtherCAT simulator
+     */
+    data_client_process();
+     
     tcp_client_handler();
   }
   /* USER CODE END 3 */
