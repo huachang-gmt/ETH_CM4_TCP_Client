@@ -20,6 +20,35 @@ static uint32_t sequence = 0; // EtherCAT資料序號
  *---------------------------------------------------------*/
 static uint32_t last_tick = 0; // 1ms Timer
 
+
+
+/**
+ * @brief  取得自開機以來的自定義微秒/高解析度時間
+ * @param  step_us: 每個 SysTick 週期代表的微秒數 (例如: 1000代表1ms, 500代表500us, 800代表800us)
+ * @retval 計算出的時間數值
+    如何使用？
+    你可以直接傳入你想要的微秒數作為參數：
+    取得標準毫秒 (1000us)：
+    uint32_t time_ms = GetCustomTime(1000);
+    取得 500us 解析度的時間：
+    uint32_t time_500us = GetCustomTime(500);
+ */
+uint32_t GetCustomTime(uint32_t step_us) {
+    uint32_t m = HAL_GetTick();
+    uint32_t tms = SysTick->LOAD + 1;
+    uint32_t u = tms - SysTick->VAL;
+
+    if ((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) != 0) {
+        m = HAL_GetTick();
+        u = tms - SysTick->VAL;
+    }
+    
+    // m * step_us: 已經過的大單位時間
+    // (u * step_us) / tms: 當前 SysTick 週期內的精細補償
+    return (m * step_us + (u * step_us) / tms);
+}
+
+
 /*----------------------------------------------------------
  * 初始化
  *---------------------------------------------------------*/
@@ -33,7 +62,8 @@ void data_client_init(void)
     read_count = 0;
     sequence = 0;
 
-    last_tick = HAL_GetTick();
+    last_tick = HAL_GetTick(); // 1ms 間隔時間
+    //last_tick = GetCustomTime(500); // // 0.5ms timer  採用 0.5ms 間隔方式，封包傳送可能會遺失，因為間隔時間太短
 }
 
 /*----------------------------------------------------------
@@ -64,7 +94,8 @@ void data_client_process(void)
 {
     uint32_t now;
 
-    now = HAL_GetTick();
+    now = HAL_GetTick(); // 1ms 間隔時間
+    //now = GetCustomTime(500); // 0.5ms timer  採用 0.5ms 間隔方式，封包傳送可能會遺失，因為間隔時間太短
 
     /*
      * 1ms一次

@@ -4,6 +4,14 @@
 
 ```text
 [2026-07-22]
+1. 修正 每一封包都會有自己的 sequence number，採遞增方式，使用 4 byte Little Endian，所以，22 4B 00 00 就是 sequence=0x00004B22 。 下一個 400 byte 封包， sequence=0x00004B23 ， 23 4B 00 00 。
+2. 因為採用每 1 ms 送出 400 byte，所以，在 Server 端的 RX Speed = 0.38 MB/s ，從 Wireshark 抓封包來看，封包間隔為 997us，接近 1 ms 。 這是正常的。
+3. 增加一個 us 計時器，uint32_t GetCustomTime(uint32_t step_us)，當設定為 500us 間隔，因為時間太快，間隔時間太短，寫入時間與讀出時間會跟不上，因為有 32 個 buffer 當作緩衝，觀察 wireshark封包，序號 sequence number 還是連續的，沒有遺失資料。
+4. 模擬資料與傳送資料都是在 main 的 while loop 執行，所以，while loop 若有其他工作超過 1 ms 間隔，會有問題。
+```
+
+```text
+[2026-07-22]
 1. 在原來的基礎上，新增加 data_client.c 與 data_client.h。 用來模擬 EtherCAT 來源資料給 tcp_client 發送出去。
 2. 使用 32 個 buffer，每個 buffer 具有 400 byte 大小。
 3. 寫入資料利用 write_index 從 buf[0] 寫到 buf[31] 然後覆蓋舊的資料繼續寫入 buf[0] ...如此反覆。

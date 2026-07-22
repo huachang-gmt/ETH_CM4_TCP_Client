@@ -80,12 +80,6 @@ static err_t tcp_client_sent(void *arg,
 
     tx_credit += len;    
 
-    if(current_packet != NULL)
-    {
-        data_client_release_packet();
-        current_packet = NULL;
-    }
-
     return ERR_OK;
 }
 
@@ -188,12 +182,7 @@ void tcp_client_handler(void)
                 state = CLIENT_IDLE;
                 break;
             }
-            
-            if(current_packet != NULL)
-            {
-                break;
-            }
-            
+                        
 
             while(tx_credit >= BUFFER_SIZE)
             {
@@ -203,8 +192,7 @@ void tcp_client_handler(void)
                 if(current_packet == NULL)
                 {
                     break;
-                }
-                
+                }             
                 
 
                 /*
@@ -253,6 +241,9 @@ void tcp_client_handler(void)
 
                 if(current_packet->sequence == last_sequence)
                     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);// 亮紅燈 (PB14)
+                else
+                    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);// 熄滅紅燈
+                
 
                 last_sequence = current_packet->sequence;
 
@@ -268,7 +259,10 @@ void tcp_client_handler(void)
                 {
                     tx_credit -= BUFFER_SIZE;
 
-                    tcp_output(tpcb);                    
+                    tcp_output(tpcb);
+
+                    data_client_release_packet();
+                    current_packet = NULL;
 
                 }
                 else
