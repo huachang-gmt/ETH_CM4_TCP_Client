@@ -3,7 +3,7 @@
 
 #include "stdint.h"
 
-#define DATA_PACKET_SIZE     312
+#define DATA_PACKET_SIZE     204
 #define BUFFER_SIZE          400
 #define BUFFER_COUNT         32
 
